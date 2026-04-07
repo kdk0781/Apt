@@ -12,8 +12,6 @@ const _SCT = (url) =>
 아래 링크를 클릭하면 주간 시세를 확인하실 수 있습니다.
 유효 기간이 있는 임시 링크이며, 기간 만료 시 접속이 제한됩니다.
 ${url}`;
-const _KJK = '12b1b09cf2ad0729c41b9247a09eb647'; // ← 여기에 카카오 JavaScript 키 입력
-const _KT = 'https://kdk0781.github.io/kb/ico/map512.png'; // ← 썸네일 이미지 URL (선택, 비우면 기본 이미지)
 function _sE(payload) {
 const key = _SS;
 const bytes = Array.from(new TextEncoder().encode(JSON.stringify(payload)));
@@ -95,7 +93,7 @@ window.addEventListener('beforeinstallprompt', e=>{
 e.preventDefault();
 e.stopImmediatePropagation();
 }, { capture: true });
-window._shareOrigUrl = origUrl;
+window._shareOrigUrl = origUrl; // 재공유용 URL
 window._isShareRecipient = true;
 window._shareIncludeFavs = !!decoded.includeFavs;
 return true;
@@ -131,37 +129,6 @@ render();
 }
 }
 const _sV = _cSL();
-function _iK() {
-if (!_KJK) return; // 키 없으면 스킵
-if (window.Kakao&&window.Kakao.isInitialized()) return;
-const script = document.createElement('script');
-script.src = 'https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js';
-script.crossOrigin = 'anonymous';
-script.onload = ()=>{
-try { window.Kakao.init(_KJK); } catch (_) {}
-};
-document.head.appendChild(script);
-}
-function _sVK(url, desc) {
-if (!window.Kakao||!window.Kakao.isInitialized()) {
-alert('카카오톡 공유를 사용할 수 없습니다.\n링크를 직접 복사해 공유해 주세요.');
-return;
-}
-const thumbImg = _KT||'https://developers.kakao.com/assets/img/about/logos/kakaolink/kakaolink_btn_medium.png';
-window.Kakao.Share.sendDefault({
-objectType: 'feed',
-content: {
-title: '📊 KB 아파트 시세표',
-description: desc||'주간 아파트 시세를 확인하세요. 유효 기간이 있는 임시 링크입니다.',
-imageUrl: thumbImg,
-link: { mobileWebUrl: url, webUrl: url },
-},
-buttons: [{
-title: '시세표 확인하기',
-link: { mobileWebUrl: url, webUrl: url },
-}],
-});
-}
 let _aG = [];
 let _fG = [];
 let _aR = '전체';
@@ -361,7 +328,6 @@ btn.querySelector('.u-label-pyeong').classList.toggle('active', _aU==='pyeong');
 _sSO();
 _sSTB();
 _sSB();
-_iK();
 _lFav();
 if (navigator.storage&&navigator.storage.persist) {
 navigator.storage.persist().catch(()=>{});
@@ -882,54 +848,26 @@ const copyMsg = document.getElementById('shareCopyMsg');
 if (!openBtn) return;
 const _eT = !!window._isShareRecipient;
 if (_eT) {
-openBtn.addEventListener('click', ()=>{
+openBtn.addEventListener('click', async ()=>{
 const originalUrl = window._shareOrigUrl||location.href;
-const existing = document.getElementById('recvSharePanel');
-if (existing) { existing.remove(); return; }
-const panel = document.createElement('div');
-panel.id = 'recvSharePanel';
-panel.className = 'recv-share-panel';
-panel.innerHTML = `
-<div class="rsp-header">
-<span class="rsp-title">공유하기</span>
-<button class="rsp-close" id="rspClose">✕</button>
-</div>
-<div class="rsp-url">${originalUrl}</div>
-<div class="rsp-actions">
-<button class="rsp-btn rsp-copy" id="rspCopy">
-📋 링크 복사
-</button>
-${_KJK ? `<button class="rsp-btn rsp-kakao" id="rspKakao">
-<img src="https://developers.kakao.com/assets/img/about/logos/kakaolink/kakaolink_btn_small.png"
-width="18" height="18" alt="">
-카카오톡으로 공유
-</button>` : ''}
-</div>
-<p class="rsp-hint">⏱ 유효 기간이 있는 임시 링크입니다</p>`;
-document.body.appendChild(panel);
-const closePanel = ()=>panel.remove();
-document.getElementById('rspClose').addEventListener('click', closePanel);
-document.addEventListener('click', (e)=>{
-if (!panel.contains(e.target)&&e.target!==openBtn) closePanel();
-}, { once: true, capture: true });
-document.getElementById('rspCopy').addEventListener('click', async ()=>{
 try { await navigator.clipboard.writeText(originalUrl); }
 catch (_) {
-const t = document.createElement('textarea');
-t.value = originalUrl;
-document.body.appendChild(t); t.select();
-document.execCommand('copy'); t.remove();
+const tmp = document.createElement('textarea');
+tmp.value = originalUrl;
+document.body.appendChild(tmp);
+tmp.select(); document.execCommand('copy');
+document.body.removeChild(tmp);
 }
-const btn = document.getElementById('rspCopy');
-if (btn) { btn.textContent = '✅ 복사됨!'; setTimeout(()=>closePanel(), 1500); }
-});
-const kakaoBtn = document.getElementById('rspKakao');
-if (kakaoBtn) {
-kakaoBtn.addEventListener('click', ()=>{
-_sVK(originalUrl);
-closePanel();
-});
-}
+const span = openBtn.querySelector('span');
+const orig = span ? span.textContent : '';
+if (span) span.textContent = '복사됨!';
+openBtn.style.background = 'var(--primary-color)';
+openBtn.style.color = '#1a1f24';
+setTimeout(()=>{
+if (span) span.textContent = orig;
+openBtn.style.background = '';
+openBtn.style.color = '';
+}, 2000);
 });
 return;
 }
@@ -971,13 +909,6 @@ if (tiny.startsWith('http')) finalUrl = tiny;
 const msgText = _SCT(finalUrl);
 linkInput.value = msgText;
 copyBtn.disabled = false;
-const kakaoShareBtn = document.getElementById('shareKakaoBtn');
-if (kakaoShareBtn) {
-kakaoShareBtn.style.display = _KJK ? 'flex' : 'none';
-kakaoShareBtn.onclick = ()=>{
-_sVK(finalUrl);
-};
-}
 window._shareOrigUrl = finalUrl; // 수신자 재공유용
 });
 copyBtn.addEventListener('click', async ()=>{
