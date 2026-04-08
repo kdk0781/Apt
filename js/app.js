@@ -1,16 +1,17 @@
 const _V = 'v9.0';
 const _SEM = {
 icon: '🔒',
-title: '링크가 만료되었습니다',
-desc: '접속량이 많아 유효한 페이지가 아닙니다.',
+title: '트래픽이 초과 되었습니다',
+desc: '트랙픽 초과로 페이지 접속이 불가합니다..',
 sub: '담당자분께 링크를 다시 요청하세요.',
 };
 const _SS = 'kdk_apt_2026_!@#'; // ← 원하는 값으로 변경
 const _SP = 'k';
+const _CNS = 'kdk-apt-map'; // ← 변경 가능 (다른 사이트와 충돌 방지용)
 const _SCT = (url) =>
 `[KB 아파트 시세표]
-아래 링크를 클릭하면 주간 시세를 확인하실 수 있습니다.
-유효 기간이 있는 임시 링크이며, 기간 만료 시 접속이 제한됩니다.
+아래 링크를 클릭하면 주간 시세 및 
+실시간 수도권 아파트 시세를 확인할실 수 있습니다.
 ${url}`;
 function _sE(payload) {
 const key = _SS;
@@ -35,7 +36,10 @@ const LS_EXP_FLAG = '_shr_exp'; // 만료 확정 플래그 (localStorage)
 try {
 if (localStorage.getItem(LS_EXP_FLAG)) {
 const freshToken = new URLSearchParams(location.search).get(_SP);
-if (!freshToken) {
+const isSharSess = !!sessionStorage.getItem('_shr_sess_alive')
+|| !!sessionStorage.getItem(SS_BLOCKED)
+|| !!sessionStorage.getItem(SS_TOKEN);
+if (!freshToken&&isSharSess) {
 _sEAB();
 return false;
 }
@@ -309,7 +313,18 @@ const v = _si.value.trim();
 if (v.length>=2) _sRS(v);
 };
 _si.addEventListener('keydown', (e)=>{
-if (e.key==='Enter') { _saveSearchTerm(); _rRSU(); }
+if (e.key==='Enter') {
+const v = _si.value.trim();
+if (v==='투데이') {
+e.preventDefault();
+_si.value = '';
+_rRSU();
+_sTVP();
+return;
+}
+_saveSearchTerm();
+_rRSU();
+}
 });
 _si.addEventListener('blur', ()=>{
 _saveSearchTerm();
@@ -353,6 +368,9 @@ _lRS();
 if (window._showSharePreview) {
 showSharePreview();
 return; // _lD는 startApp()에서 호출
+}
+if (!window._isShareRecipient) {
+_tTV();
 }
 _lD();
 });
@@ -914,7 +932,7 @@ splash.style.opacity = '1';
 splash.style.visibility = 'visible';
 splash.innerHTML = `
 <div class="share-preview-page">
-<p class="spp-badge">임시 공유 링크</p>
+<p class="spp-badge">수도권 아파트 시세 링크</p>
 <div class="spp-icon">📊</div>
 <h2 class="spp-title">아파트 시세표</h2>
 <p class="spp-desc">
@@ -923,7 +941,7 @@ Preview를 클릭하거나<br>
 자동으로 이동됩니다.
 </p>
 <button id="sharePreviewBtn" class="spp-btn">Preview →</button>
-<p class="spp-notice">⏱ 유효 기간이 있는 임시 링크입니다</p>
+<p class="spp-notice">🏠 매주 실시간으로 수도권 시세 확인가능한 링크 입니다.</p>
 </div>`;
 let started = false;
 const go = ()=>{
@@ -1017,4 +1035,79 @@ e.stopPropagation();
 _rRS(btn.dataset.del);
 });
 });
+}
+function _gTK() {
+const d = new Date();
+const y = d.getFullYear();
+const m = String(d.getMonth() + 1).padStart(2, '0');
+const day = String(d.getDate()).padStart(2, '0');
+return 'd-' + y + m + day; // 예: d-20260408
+}
+async function _tTV() {
+const key = _gTK();
+const lsKey = '_today_hit_' + key;
+if (localStorage.getItem(lsKey)) return; // 이미 카운트됨
+try {
+await fetch(
+`https://api.counterapi.dev/v1/${_CNS}/${key}/up`,
+{ method: 'GET' } // counterapi.dev는 GET으로 증가
+);
+localStorage.setItem(lsKey, '1');
+_cOHK();
+} catch (_) {} // API 실패 시 조용히 무시
+}
+function _cOHK() {
+const cutoff = new Date();
+cutoff.setDate(cutoff.getDate() - 30);
+const cutStr = cutoff.getFullYear()
++ String(cutoff.getMonth()+1).padStart(2,'0')
++ String(cutoff.getDate()).padStart(2,'0');
+Object.keys(localStorage).forEach(k=>{
+if (k.startsWith('_today_hit_d-')) {
+const dateStr = k.replace('_today_hit_d-', '');
+if (dateStr < cutStr) localStorage.removeItem(k);
+}
+});
+}
+async function _sTVP() {
+document.getElementById('todayPopup')?.remove();
+const popup = document.createElement('div');
+popup.id = 'todayPopup';
+popup.className = 'today-popup';
+popup.innerHTML = `
+<div class="tp-header">
+<span class="tp-title">📊 오늘 방문자</span>
+<button class="tp-close" onclick="document.getElementById('todayPopup')?.remove()">✕</button>
+</div>
+<div class="tp-body">
+<div class="tp-count" id="tpCount">
+<div class="tp-spinner"></div>
+</div>
+<p class="tp-date">${new Date().toLocaleDateString('ko-KR')} 기준</p>
+<p class="tp-hint">같은 브라우저 당일 중복 집계 제외</p>
+</div>`;
+document.body.appendChild(popup);
+setTimeout(()=>{
+document.addEventListener('click', function _close(e) {
+if (!popup.contains(e.target)) {
+popup.remove();
+document.removeEventListener('click', _close);
+}
+});
+}, 200);
+try {
+const key = _gTK();
+const res = await fetch(
+`https://api.counterapi.dev/v1/${_CNS}/${key}/get`
+);
+const data = await res.json();
+const count = data?.value ?? data?.count ?? 0;
+const el = document.getElementById('tpCount');
+if (el) {
+el.innerHTML = `<span class="tp-num">${count.toLocaleString('ko-KR')}</span><span class="tp-unit">명</span>`;
+}
+} catch (_) {
+const el = document.getElementById('tpCount');
+if (el) el.innerHTML = '<span class="tp-err">집계 불가</span>';
+}
 }
