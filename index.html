@@ -13,7 +13,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-    <link rel="stylesheet" href="css/common.css?v=73">
+    <link rel="stylesheet" href="css/common.css?v=74">
 </head>
 <body>
 
@@ -78,14 +78,10 @@
         <!-- 지역 칩 필터 (파싱 후 동적 생성) -->
         <div id="regionFilter" class="region-filter"></div>
 
-        <!-- 결과 수 + 단위 토글 + 정렬 + 기준일 -->
+        <!-- 결과 수 + 단위 토글 + 정렬 -->
         <div class="meta-row">
             <span id="resultCount" class="result-count"></span>
             <div style="display:flex; align-items:center; gap:8px;">
-                <!-- 생애최초 LTV 토글 -->
-                <button id="firstHomeBtn" class="first-home-btn" title="생애최초 LTV 적용">
-                    🏠 생애최초
-                </button>
                 <!-- ㎡ / 평 단위 토글 -->
                 <button id="unitToggleBtn" class="unit-toggle-btn" title="면적 단위 전환">
                     <span class="u-label-sqm active">㎡</span>
@@ -100,7 +96,14 @@
                 </select>
             </div>
         </div>
-        <div id="baseDateLabel" class="base-date-label"></div>
+
+        <!-- 기준일(좌) + 생애최초 버튼(우) -->
+        <div class="date-action-row">
+            <div id="baseDateLabel" class="base-date-label"></div>
+            <button id="firstHomeBtn" class="first-home-btn" title="생애최초 LTV 적용">
+                🏠 생애최초
+            </button>
+        </div>
 
     </div><!-- /.sticky-header -->
 
@@ -191,6 +194,6 @@
     </div>
 </div>
 
-<script src="js/app.js?v=73"></script>
+<script src="js/app.js?v=74"></script>
 </body>
 </html>
