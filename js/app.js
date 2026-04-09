@@ -355,7 +355,7 @@ _aFH = !_aFH;
 const btn = document.getElementById('firstHomeBtn');
 btn.classList.toggle('active', _aFH);
 btn.title = _aFH ? '생애최초 LTV 해제' : '생애최초 LTV 적용';
-_rI();
+_rI(true);
 });
 _sSO();
 _sSTB();
@@ -799,7 +799,7 @@ ${rowsHTML}
 </div>
 </div>`;
 }
-function _rI() {
+function _rI(keepScroll) {
 const listBody = document.getElementById('listBody');
 const sentinel = document.getElementById('scrollSentinel');
 const countEl = document.getElementById('resultCount');
@@ -818,7 +818,7 @@ sentinel.style.display = 'none';
 return;
 }
 _lM();
-window.scrollTo({ top: 0, behavior: 'smooth' });
+if (!keepScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 function _lM() {
 const listBody = document.getElementById('listBody');
@@ -917,26 +917,38 @@ d.toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit' });
 let finalUrl = longUrl;
 try {
 const res = await fetch(
-'https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl)
+'https://is.gd/create.php?format=simple&url=' + encodeURIComponent(longUrl)
 );
-const tiny = await res.text();
-if (tiny.startsWith('http')) finalUrl = tiny;
+const short = (await res.text()).trim();
+if (short.startsWith('http')) finalUrl = short;
 } catch (_) { }
 const msgText = _SCT(finalUrl);
-linkInput.value = msgText;
+linkInput.value = msgText; // 메시지 미리보기
 copyBtn.disabled = false;
+const urlOnlyBtn = document.getElementById('shareUrlOnlyBtn');
+if (urlOnlyBtn) urlOnlyBtn.dataset.url = finalUrl;
 window._shareOrigUrl = finalUrl; // 수신자 재공유용
 });
 copyBtn.addEventListener('click', async ()=>{
 const text = linkInput.value;
-try {
-await navigator.clipboard.writeText(text);
-} catch (_) {
-linkInput.select();
-document.execCommand('copy');
-}
+try { await navigator.clipboard.writeText(text); }
+catch (_) { linkInput.select(); document.execCommand('copy'); }
 copyMsg.style.display = 'block';
 setTimeout(()=>{ copyMsg.style.display = 'none'; }, 2500);
+});
+document.getElementById('shareUrlOnlyBtn')?.addEventListener('click', async ()=>{
+const urlBtn = document.getElementById('shareUrlOnlyBtn');
+const url = urlBtn?.dataset.url||window._shareOrigUrl||'';
+if (!url) return;
+try { await navigator.clipboard.writeText(url); }
+catch (_) {
+const t = document.createElement('textarea');
+t.value = url; document.body.appendChild(t);
+t.select(); document.execCommand('copy'); t.remove();
+}
+const orig = urlBtn.textContent;
+urlBtn.textContent = '✅ 복사됨!';
+setTimeout(()=>{ urlBtn.textContent = orig; }, 2000);
 });
 }
 const PREVIEW_SEC = 10;
