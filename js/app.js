@@ -593,6 +593,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const savedPrev        = localStorage.getItem(CACHE_PREV);
             const savedFavs        = localStorage.getItem(FAV_KEY);
             const savedRecent      = localStorage.getItem(RECENT_KEY);
+            const savedAdmin       = localStorage.getItem(ADMIN_LS_KEY);   /* 관리자 모드 상태 보존 */
 
             const isShareSess  = !!sessionStorage.getItem('_shr_t');
             const savedShrLs   = isShareSess ? localStorage.getItem('_shr_ls') : null;
@@ -602,6 +603,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (savedPrev)        localStorage.setItem(CACHE_PREV, savedPrev);
             if (savedFavs)        localStorage.setItem(FAV_KEY, savedFavs);
             if (savedRecent)      localStorage.setItem(RECENT_KEY, savedRecent);
+            if (savedAdmin)       localStorage.setItem(ADMIN_LS_KEY, savedAdmin);
 
             if (savedShrLs)       localStorage.setItem('_shr_ls', savedShrLs);
             if (savedShrExp)      localStorage.setItem('_shr_exp', savedShrExp);
@@ -704,6 +706,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 setAdmin(true);
                 showAdminBadge();
+                rebindShareBtn(); /* 공유 버튼을 관리자 모드 핸들러로 재바인딩 */
                 showToast('👑 관리자 모드 활성화 — 공유 버튼에 옵션이 표시됩니다');
                 return;
             }
@@ -715,6 +718,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderRecentSearchUI();
                 setAdmin(false);
                 hideAdminBadge();
+                rebindShareBtn(); /* 공유 버튼을 일반 복사 핸들러로 재바인딩 */
                 showToast('관리자 모드를 해제했습니다');
                 return;
             }
@@ -2310,37 +2314,73 @@ function base64urlToUint8(b64u) {
 }
 
 /* ════════════════════════════════════════════
-   관리자 배지 (오너 + 관리자 모드 ON 시 표시)
+   관리자 모드 인라인 바 (오너 + 관리자 ON 시 표시)
    ────────────────────────────────────────────
-   - 우상단에 작은 "👑 관리자" 칩 노출
-   - 클릭 시 빠른 해제 (확인 후 setAdmin(false))
+   - sticky-header 최상단에 전체 너비 바 형태로 삽입
+   - 오른쪽 "해제" 버튼으로 즉시 해제 (새로고침 불필요)
+   - 바 삽입/제거 시 syncScrollPadding으로 스티키 헤더 높이 재계산
 ════════════════════════════════════════════ */
 function showAdminBadge() {
     if (document.getElementById('adminBadge')) return;
-    const b = document.createElement('button');
-    b.id = 'adminBadge';
-    b.className = 'admin-badge';
-    b.type = 'button';
-    b.title = '관리자 모드 — 클릭 시 해제';
-    b.innerHTML = '<span class="ab-crown">👑</span><span class="ab-text">관리자</span>';
-    b.addEventListener('click', () => {
-        if (confirm('관리자 모드를 해제하시겠습니까?')) {
-            setAdmin(false);
-            hideAdminBadge();
-            showToast('관리자 모드를 해제했습니다');
-            /* 공유 버튼 핸들러 재바인딩 — 이번 세션에 즉시 반영하려면 새로고침 권장 */
-            setTimeout(() => location.reload(), 600);
-        }
+
+    const stickyHeader = document.querySelector('.sticky-header');
+    if (!stickyHeader) return;
+
+    const bar = document.createElement('div');
+    bar.id = 'adminBadge';
+    bar.className = 'admin-bar';
+    bar.innerHTML = `
+        <span class="ab-crown">👑</span>
+        <span class="ab-text">관리자 모드</span>
+        <button type="button" class="ab-off" aria-label="관리자 모드 해제">해제</button>
+    `;
+    stickyHeader.prepend(bar);
+
+    /* 해제 버튼: 즉시 해제 + 공유 버튼 재바인딩 (새로고침 불필요) */
+    bar.querySelector('.ab-off').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!confirm('관리자 모드를 해제하시겠습니까?')) return;
+        setAdmin(false);
+        hideAdminBadge();
+        rebindShareBtn();
+        showToast('관리자 모드를 해제했습니다');
     });
-    document.body.appendChild(b);
-    requestAnimationFrame(() => b.classList.add('visible'));
+
+    /* 페이드인 + 스티키 헤더 높이 재계산 */
+    requestAnimationFrame(() => {
+        bar.classList.add('visible');
+        syncScrollPadding();
+    });
 }
 
 function hideAdminBadge() {
     const b = document.getElementById('adminBadge');
     if (!b) return;
     b.classList.remove('visible');
-    setTimeout(() => b.remove(), 250);
+    /* CSS transition 종료 후 DOM 제거 + 스크롤 패딩 재조정 */
+    setTimeout(() => {
+        b.remove();
+        syncScrollPadding();
+    }, 260);
+}
+
+/* ════════════════════════════════════════════
+   공유 버튼 핸들러 재바인딩
+   ────────────────────────────────────────────
+   setupShareBtn()은 DOMContentLoaded 때 단 한 번 호출되므로,
+   이후 관리자 모드를 켜거나 끌 때 기존 이벤트 리스너가 그대로 남음.
+   → 버튼을 cloneNode로 교체해 모든 리스너를 날린 뒤 재바인딩.
+════════════════════════════════════════════ */
+function rebindShareBtn() {
+    const btn = document.getElementById('shareBtnOpen');
+    if (!btn || !btn.parentNode) return;
+    const clone = btn.cloneNode(true);
+    /* 현재 커스텀 속성/클래스 초기화 */
+    clone.classList.remove('flash-ok');
+    clone.style.cssText = '';
+    btn.parentNode.replaceChild(clone, btn);
+    /* 새 버튼에 현재 상태(isAdmin/수신자)에 맞는 핸들러 바인딩 */
+    setupShareBtn();
 }
 
 /* ════════════════════════════════════════════
