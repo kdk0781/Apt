@@ -1966,3 +1966,38 @@ body.pyeong-mode .u-sqm    { display: none !important; }
         border-color: rgba(245, 158, 11, 0.5);
     }
 }
+
+/* ── PWA 설치 카드 알림 체크박스 ── */
+.pic-notif-check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--hover-bg);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 8px;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.pic-notif-check:hover { background: var(--border-color); }
+.pic-notif-check input[type="checkbox"] {
+    width: 18px; height: 18px;
+    margin: 0;
+    accent-color: var(--primary-dark);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.pic-notif-text {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.3;
+}
+.pic-btn-row {
+    display: flex;
+    gap: 8px;
+}
+.pic-btn-row .pic-btn { flex: 1; }
+.pic-btn-row .pic-btn-install { flex: 2; }
