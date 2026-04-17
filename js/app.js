@@ -754,6 +754,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setAdmin(true);
                 showAdminBadge();
                 rebindShareBtn(); /* 공유 버튼을 관리자 모드 핸들러로 재바인딩 */
+                reclassifyToDirectVisit(); /* 공유 → 직접 접속으로 재분류 */
                 showToast('👑 관리자 모드 활성화 — 공유 버튼에 옵션이 표시됩니다');
                 return;
             }
@@ -920,8 +921,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return; // loadData는 startApp()에서 호출
     }
 
-    /* 오늘 방문자 카운트: 오너(직접) / 수신자(공유) 분리 집계 */
-    trackTodayVisit(!!window._isShareRecipient);
+    /* 오늘 방문자 카운트
+       ─────────────────────────────────────────
+       직접 접속 : 관리자 + 부관리자 (약 7명)
+       공유 접속 : 일반 수신자 + 비관리자 일반 방문자 (나머지 전부)
+       → 관리자가 아닌 일반 방문자도 "공유 접속"으로 분류됨 */
+    const _isDirect = isAdmin() || !!window._isDeputy;
+    trackTodayVisit(_isDirect);
 
     loadData();
 
@@ -2095,9 +2101,17 @@ function renderRecentSearchUI() {
 /* ════════════════════════════════════════════
    투데이 방문자 카운터
    ────────────────────────────────────────────
-   countapi.dev 무료 API 사용
-   키 형식: COUNT_NS / d-YYYYMMDD (일별 독립 카운트)
-   localStorage: 같은 브라우저의 당일 중복 카운트 방지
+   분류 기준:
+     직접 접속 (d-YYYYMMDD) : 관리자 + 부관리자만 (~7명)
+     공유 접속 (s-YYYYMMDD) : 일반 수신자 + 비관리자 일반 방문자
+
+   중복 방지:
+     관리자/부관리자 → localStorage (같은 기기에서 당일 1회)
+     공유/일반       → sessionStorage (탭 격리)
+
+   재분류:
+     일반 접속 후 검색창에 "관리자" 입력 → 공유 1 감소, 직접 1 증가
+     이후 그 기기에서는 항상 직접 접속으로 카운팅
 ════════════════════════════════════════════ */
 
 function getTodayKey() {
@@ -2108,24 +2122,24 @@ function getTodayKey() {
     return 'd-' + y + m + day; // 예: d-20260408
 }
 
-/* 페이지 로드 시 1회 hit
-   isRecipient=false → 오너(직접): d-YYYYMMDD 키, localStorage 중복 방지
-   isRecipient=true  → 수신자(공유): s-YYYYMMDD 키, sessionStorage 중복 방지 (탭 격리)
-*/
-async function trackTodayVisit(isRecipient) {
-    if (!FIREBASE_URL) return; // Firebase URL 미설정 시 스킵
+/**
+ * 페이지 로드 시 1회 호출
+ * @param {boolean} isDirect - true: 관리자/부관리자(직접), false: 그 외(공유)
+ */
+async function trackTodayVisit(isDirect) {
+    if (!FIREBASE_URL) return;
 
     const dateKey = getTodayKey();
-    const apiKey  = isRecipient ? 's-' + dateKey.slice(2) : dateKey;
+    const apiKey  = isDirect ? dateKey : 's-' + dateKey.slice(2);
 
-    /* 중복 방지: 오너 → localStorage, 수신자 → sessionStorage */
+    /* 중복 방지 키 */
     const dupKey  = '_today_hit_' + apiKey;
-    const storage = isRecipient ? sessionStorage : localStorage;
+    /* 관리자/부관리자 → localStorage (기기 단위, 같은 기기에서 관리자는 당일 1회)
+       공유/일반      → sessionStorage (탭 단위, 여러 공유 수신자가 같은 기기라도 탭별 분리) */
+    const storage = isDirect ? localStorage : sessionStorage;
     if (storage.getItem(dupKey)) return;
 
     try {
-        /* Firebase Realtime Database Transaction
-           GET 현재값 → +1 → PUT 새 값 */
         const path = `${FIREBASE_URL}/${COUNT_NS}/${apiKey}.json`;
         const cur  = await fetch(path).then(r => r.json()).catch(() => 0);
         const next = (typeof cur === 'number' ? cur : 0) + 1;
@@ -2136,7 +2150,56 @@ async function trackTodayVisit(isRecipient) {
         });
         if (res.ok) {
             storage.setItem(dupKey, '1');
-            if (!isRecipient) cleanOldHitKeys();
+            if (isDirect) cleanOldHitKeys();
+        }
+    } catch (_) {}
+}
+
+/**
+ * 관리자 모드 활성화 시 재분류
+ * ─────────────────────────────────────────
+ * 시나리오: 일반 링크로 접속 (→ 공유로 카운팅) → 검색창에 "관리자" 입력
+ * 결과: 공유 카운트 -1, 직접 카운트 +1, localStorage에 직접 접속 플래그 설정
+ *       → 이후 같은 기기에서는 항상 직접 접속으로 분류됨
+ */
+async function reclassifyToDirectVisit() {
+    if (!FIREBASE_URL) return;
+
+    const dateKey   = getTodayKey();
+    const directKey = dateKey;                   // d-YYYYMMDD
+    const shareKey  = 's-' + dateKey.slice(2);   // s-YYYYMMDD
+    const directDup = '_today_hit_' + directKey;
+    const shareDup  = '_today_hit_' + shareKey;
+
+    /* 이미 직접 접속으로 카운팅 됐으면 중복 방지 */
+    if (localStorage.getItem(directDup)) return;
+
+    try {
+        /* ① 공유 카운트에서 자기 기여분 감소 (이번 탭에서 카운팅했을 때만) */
+        if (sessionStorage.getItem(shareDup)) {
+            const sharePath = `${FIREBASE_URL}/${COUNT_NS}/${shareKey}.json`;
+            const shareCur  = await fetch(sharePath).then(r => r.json()).catch(() => 0);
+            if (typeof shareCur === 'number' && shareCur > 0) {
+                await fetch(sharePath, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(shareCur - 1),
+                });
+            }
+            sessionStorage.removeItem(shareDup);
+        }
+
+        /* ② 직접 카운트 +1 */
+        const directPath = `${FIREBASE_URL}/${COUNT_NS}/${directKey}.json`;
+        const directCur  = await fetch(directPath).then(r => r.json()).catch(() => 0);
+        const directNext = (typeof directCur === 'number' ? directCur : 0) + 1;
+        const res = await fetch(directPath, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(directNext),
+        });
+        if (res.ok) {
+            localStorage.setItem(directDup, '1');
         }
     } catch (_) {}
 }
@@ -2156,7 +2219,7 @@ function cleanOldHitKeys() {
     });
 }
 
-/* 투데이 팝업 — 직접/공유 분리 표시 */
+/* 투데이 팝업 — 관리자(직접) / 일반(공유) 분리 표시 */
 async function showTodayVisitorPopup() {
     document.getElementById('todayPopup')?.remove();
 
@@ -2171,12 +2234,12 @@ async function showTodayVisitorPopup() {
         <div class="tp-body">
             <div class="tp-rows">
                 <div class="tp-row">
-                    <span class="tp-label">🏠 직접 접속</span>
+                    <span class="tp-label">👑 관리자 접속</span>
                     <span class="tp-val" id="tpDirect"><span class="tp-spinner-sm"></span></span>
                 </div>
                 <div class="tp-divider"></div>
                 <div class="tp-row">
-                    <span class="tp-label">🔗 공유 링크</span>
+                    <span class="tp-label">🔗 공유 접속</span>
                     <span class="tp-val" id="tpShare"><span class="tp-spinner-sm"></span></span>
                 </div>
                 <div class="tp-divider"></div>
@@ -2186,7 +2249,7 @@ async function showTodayVisitorPopup() {
                 </div>
             </div>
             <p class="tp-date">${new Date().toLocaleDateString('ko-KR')} 기준</p>
-            <p class="tp-hint">같은 브라우저 당일 중복 집계 제외</p>
+            <p class="tp-hint">관리자 = 관리자 + 부관리자 · 공유 = 그 외 전체<br>같은 기기/탭 당일 중복 집계 제외</p>
         </div>`;
     document.body.appendChild(popup);
 
