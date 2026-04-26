@@ -1167,9 +1167,12 @@ function parseAndRender(csv) {
     const toRaw  = v => { const n = toNum(v); return isNaN(n) ? 0 : n; };
     const toArea = v => { const n = toNum(v); if(isNaN(n)) return String(v); return n%1===0 ? String(n) : n.toFixed(2).replace(/\.?0+$/,''); };
     const toPyeong = (sqm, p) => {
-        if (p) { const n=toNum(p); if(!isNaN(n)&&n>0) return n+'평'; }
-        const n = toNum(sqm);
-        return isNaN(n) ? '-' : (n/3.3058).toFixed(1)+'평';
+        /* CSV에 평형 칼럼이 있으면 사용, 없으면 ㎡÷3.3058 변환
+           소수점 최대 2자리 (24.003375 → 24, 29.88095 → 29.88) */
+        let n;
+        if (p) { n = toNum(p); if (!isNaN(n) && n > 0) return (n % 1 === 0 ? String(n) : n.toFixed(2).replace(/\.?0+$/, '')) + '평'; }
+        n = toNum(sqm);
+        return isNaN(n) ? '-' : (n / 3.3058).toFixed(1).replace(/\.?0+$/, '') + '평';
     };
     const getSuffix = v => {
         const raw = String(v).trim().replace(/^[\d.,]+/,'');
