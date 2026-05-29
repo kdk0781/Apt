@@ -1804,6 +1804,19 @@ body.pyeong-mode .u-sqm    { display: none !important; }
     letter-spacing: -0.2px;
     transition: background 0.15s, transform 0.1s;
 }
+.admin-bar .ab-pw {
+    background: rgba(0, 0, 0, 0.10);
+    color: #1a1f24;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.15s, transform 0.1s;
+}
+.admin-bar .ab-pw:hover  { background: rgba(0, 0, 0, 0.22); }
+.admin-bar .ab-pw:active { transform: scale(0.92); }
 .admin-bar .ab-off:hover  { background: rgba(0, 0, 0, 0.28); }
 .admin-bar .ab-off:active { transform: scale(0.94); }
 
@@ -2003,3 +2016,93 @@ body.pyeong-mode .u-sqm    { display: none !important; }
 }
 .pic-btn-row .pic-btn { flex: 1; }
 .pic-btn-row .pic-btn-install { flex: 2; }
+
+/* ════════════════════════════════════════════
+   관리자 비밀번호 모달
+════════════════════════════════════════════ */
+.apm-overlay {
+    position: fixed; inset: 0;
+    z-index: 9900;
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; visibility: hidden;
+    transition: opacity 0.22s, visibility 0.22s;
+    padding: 16px;
+}
+.apm-overlay.open { opacity: 1; visibility: visible; }
+.apm-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    box-shadow: 0 12px 36px rgba(0,0,0,0.28);
+    width: 100%; max-width: 360px;
+    padding: 24px;
+    transform: translateY(12px);
+    transition: transform 0.22s;
+}
+.apm-overlay.open .apm-card { transform: translateY(0); }
+.apm-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px;
+}
+.apm-icon { font-size: 1.3rem; line-height: 1; }
+.apm-title {
+    flex: 1; font-size: 1rem; font-weight: 800;
+    color: var(--text-main); letter-spacing: -0.3px;
+}
+.apm-close {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--hover-bg); color: var(--text-muted);
+    border: none; font-size: 0.95rem; cursor: pointer;
+    transition: 0.15s;
+}
+.apm-close:hover { background: var(--border-color); color: var(--text-main); }
+.apm-desc {
+    font-size: 0.82rem; color: var(--text-muted);
+    margin: 0 0 16px; line-height: 1.4;
+}
+.apm-fields {
+    display: flex; flex-direction: column; gap: 10px;
+    margin-bottom: 4px;
+}
+.apm-input {
+    width: 100%; box-sizing: border-box;
+    padding: 12px 14px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-main);
+    color: var(--text-main);
+    font-size: 1.05rem; font-weight: 700;
+    font-family: inherit;
+    letter-spacing: 4px;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.15s;
+    -webkit-text-security: disc;
+}
+.apm-input:focus { border-color: var(--primary-dark); }
+.apm-input::placeholder {
+    letter-spacing: 0; font-weight: 500;
+    font-size: 0.88rem; color: var(--text-muted);
+}
+.apm-error {
+    font-size: 0.78rem; color: #ef4444;
+    min-height: 20px; margin: 8px 0 4px;
+    text-align: center; font-weight: 600;
+}
+.apm-submit {
+    width: 100%; padding: 12px;
+    border: none; border-radius: 10px;
+    background: var(--primary-dark);
+    color: #1a1f24;
+    font-size: 0.92rem; font-weight: 800;
+    font-family: inherit;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    letter-spacing: -0.2px;
+}
+.apm-submit:hover { opacity: 0.9; }
+.apm-submit:active { transform: scale(0.97); }
+.apm-submit:disabled {
+    opacity: 0.4; cursor: not-allowed;
+}
