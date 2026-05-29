@@ -47,6 +47,51 @@ const ADMIN_PASSPHRASE_OFF = '관리자해제';
 const ADMIN_LS_KEY         = '_apt_admin_v1';
 const ADMIN_SECRET         = 'kdk_apt_admin_2026';
 
+/* ── 관리자 비밀번호 시스템 ──
+   - 초기 비밀번호: 1234 (숫자만 허용)
+   - localStorage에 FNV 해시로 저장 (평문 저장 안 함)
+   - 검색창 "관리자" 입력 → 비밀번호 모달 → 인증 성공 시 관리자 모드 활성화
+   - 검색창 "비밀번호변경" 입력 → 관리자 상태에서만 변경 모달 표시 */
+const ADMIN_PW_KEY     = '_apt_admin_pw';
+const ADMIN_PW_DEFAULT = '1234';
+const ADMIN_PW_CHANGE  = '비밀번호변경';
+
+/* FNV-1a 해시 (비밀번호용 — 평문 저장 방지) */
+function _hashPin(pin) {
+    let h = 0x811c9dc5;
+    const s = 'pin:' + pin + ':' + ADMIN_SECRET;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(36);
+}
+
+/* 저장된 비밀번호 해시 가져오기 (미설정 시 초기값 1234 해시 자동 생성) */
+function _getStoredPwHash() {
+    try {
+        const h = localStorage.getItem(ADMIN_PW_KEY);
+        if (h) return h;
+    } catch {}
+    /* 초기 비밀번호 해시 설정 */
+    const defaultHash = _hashPin(ADMIN_PW_DEFAULT);
+    try { localStorage.setItem(ADMIN_PW_KEY, defaultHash); } catch {}
+    return defaultHash;
+}
+
+/* 비밀번호 검증 */
+function verifyAdminPin(pin) {
+    return _hashPin(pin) === _getStoredPwHash();
+}
+
+/* 비밀번호 변경 (새 해시 저장) */
+function changeAdminPin(newPin) {
+    try {
+        localStorage.setItem(ADMIN_PW_KEY, _hashPin(newPin));
+        return true;
+    } catch { return false; }
+}
+
 /* 부관리자가 재공유 시 적용할 기간 상한 (밀리초) */
 const DEPUTY_MAX_MS = 90 * 24 * 60 * 60 * 1000; /* 90일 */
 
@@ -645,6 +690,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const savedFavs        = localStorage.getItem(FAV_KEY);
             const savedRecent      = localStorage.getItem(RECENT_KEY);
             const savedAdmin       = localStorage.getItem(ADMIN_LS_KEY);   /* 관리자 모드 상태 보존 */
+            const savedAdminPw     = localStorage.getItem(ADMIN_PW_KEY);   /* 관리자 비밀번호 보존 */
 
             const isShareSess  = !!sessionStorage.getItem('_shr_t');
             const savedShrLs   = isShareSess ? localStorage.getItem('_shr_ls') : null;
@@ -655,6 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (savedFavs)        localStorage.setItem(FAV_KEY, savedFavs);
             if (savedRecent)      localStorage.setItem(RECENT_KEY, savedRecent);
             if (savedAdmin)       localStorage.setItem(ADMIN_LS_KEY, savedAdmin);
+            if (savedAdminPw)     localStorage.setItem(ADMIN_PW_KEY, savedAdminPw);
 
             if (savedShrLs)       localStorage.setItem('_shr_ls', savedShrLs);
             if (savedShrExp)      localStorage.setItem('_shr_exp', savedShrExp);
@@ -744,22 +791,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Enter') {
             const v = _si.value.trim();
 
-            /* ── 관리자 모드 활성화 ── */
+            /* ── 관리자 모드 활성화 (비밀번호 입력 필요) ── */
             if (v === ADMIN_PASSPHRASE) {
                 e.preventDefault();
                 _si.value = '';
                 _si.blur();
                 renderRecentSearchUI();
                 if (window._isShareRecipient) {
-                    /* 공유 수신자 환경에선 활성화 거부 (다른 기기로 유출 방지) */
                     showToast('⛔ 공유 링크 환경에서는 활성화할 수 없습니다');
                     return;
                 }
-                setAdmin(true);
-                showAdminBadge();
-                rebindShareBtn(); /* 공유 버튼을 관리자 모드 핸들러로 재바인딩 */
-                reclassifyToDirectVisit(); /* 공유 → 직접 접속으로 재분류 */
-                showToast('👑 관리자 모드 활성화 — 공유 버튼에 옵션이 표시됩니다');
+                if (isAdmin()) {
+                    showToast('이미 관리자 모드입니다');
+                    return;
+                }
+                showAdminPinModal();
                 return;
             }
             /* ── 관리자 모드 해제 ── */
@@ -770,8 +816,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderRecentSearchUI();
                 setAdmin(false);
                 hideAdminBadge();
-                rebindShareBtn(); /* 공유 버튼을 일반 복사 핸들러로 재바인딩 */
+                rebindShareBtn();
                 showToast('관리자 모드를 해제했습니다');
+                return;
+            }
+            /* ── 비밀번호 변경 (관리자 상태에서만) ── */
+            if (v === ADMIN_PW_CHANGE) {
+                e.preventDefault();
+                _si.value = '';
+                _si.blur();
+                renderRecentSearchUI();
+                if (!isAdmin()) {
+                    showToast('⛔ 관리자 모드에서만 변경할 수 있습니다');
+                    return;
+                }
+                showChangePinModal();
                 return;
             }
 
@@ -925,13 +984,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return; // loadData는 startApp()에서 호출
     }
 
-    /* 오늘 방문자 카운트
+    /* 오늘 방문자 카운트 (3분류)
        ─────────────────────────────────────────
-       직접 접속 : 관리자 + 부관리자 (약 7명)
-       공유 접속 : 일반 수신자 + 비관리자 일반 방문자 (나머지 전부)
-       → 관리자가 아닌 일반 방문자도 "공유 접속"으로 분류됨 */
-    const _isDirect = isAdmin() || !!window._isDeputy;
-    trackTodayVisit(_isDirect);
+       관리자 접속   : isAdmin() === true
+       부관리자 접속 : 토큰 deputy === true
+       공유링크 접속 : 나머지 전부 (일반 수신자 + 비관리자 방문자) */
+    const _visitType = isAdmin() ? 'admin'
+                     : window._isDeputy ? 'deputy'
+                     : 'share';
+    trackTodayVisit(_visitType);
 
     loadData();
 
@@ -2187,17 +2248,17 @@ function renderRecentSearchUI() {
 /* ════════════════════════════════════════════
    투데이 방문자 카운터
    ────────────────────────────────────────────
-   분류 기준:
-     직접 접속 (d-YYYYMMDD) : 관리자 + 부관리자만 (~7명)
-     공유 접속 (s-YYYYMMDD) : 일반 수신자 + 비관리자 일반 방문자
+   분류 기준 (3종):
+     관리자 접속   (d-YYYYMMDD)  : isAdmin() === true
+     부관리자 접속 (dp-YYYYMMDD) : 부관리자 토큰(_isDeputy)
+     공유링크 접속 (s-YYYYMMDD)  : 일반 수신자 + 비관리자 일반 방문자
 
    중복 방지:
      관리자/부관리자 → localStorage (같은 기기에서 당일 1회)
      공유/일반       → sessionStorage (탭 격리)
 
    재분류:
-     일반 접속 후 검색창에 "관리자" 입력 → 공유 1 감소, 직접 1 증가
-     이후 그 기기에서는 항상 직접 접속으로 카운팅
+     일반 접속 후 검색창에 "관리자" 입력 → 공유 1 감소, 관리자 1 증가
 ════════════════════════════════════════════ */
 
 function getTodayKey() {
@@ -2205,24 +2266,24 @@ function getTodayKey() {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
-    return 'd-' + y + m + day; // 예: d-20260408
+    return y + m + day; // 예: 20260408
 }
 
 /**
  * 페이지 로드 시 1회 호출
- * @param {boolean} isDirect - true: 관리자/부관리자(직접), false: 그 외(공유)
+ * @param {'admin'|'deputy'|'share'} visitType
  */
-async function trackTodayVisit(isDirect) {
+async function trackTodayVisit(visitType) {
     if (!FIREBASE_URL) return;
 
-    const dateKey = getTodayKey();
-    const apiKey  = isDirect ? dateKey : 's-' + dateKey.slice(2);
+    const date = getTodayKey();
+    /* Firebase 키: d-날짜(관리자), dp-날짜(부관리자), s-날짜(공유) */
+    const prefixMap = { admin: 'd-', deputy: 'dp-', share: 's-' };
+    const apiKey = (prefixMap[visitType] || 's-') + date;
 
-    /* 중복 방지 키 */
     const dupKey  = '_today_hit_' + apiKey;
-    /* 관리자/부관리자 → localStorage (기기 단위, 같은 기기에서 관리자는 당일 1회)
-       공유/일반      → sessionStorage (탭 단위, 여러 공유 수신자가 같은 기기라도 탭별 분리) */
-    const storage = isDirect ? localStorage : sessionStorage;
+    /* 관리자/부관리자 → localStorage, 공유 → sessionStorage */
+    const storage = visitType === 'share' ? sessionStorage : localStorage;
     if (storage.getItem(dupKey)) return;
 
     try {
@@ -2236,32 +2297,28 @@ async function trackTodayVisit(isDirect) {
         });
         if (res.ok) {
             storage.setItem(dupKey, '1');
-            if (isDirect) cleanOldHitKeys();
+            if (visitType !== 'share') cleanOldHitKeys();
         }
     } catch (_) {}
 }
 
 /**
  * 관리자 모드 활성화 시 재분류
- * ─────────────────────────────────────────
- * 시나리오: 일반 링크로 접속 (→ 공유로 카운팅) → 검색창에 "관리자" 입력
- * 결과: 공유 카운트 -1, 직접 카운트 +1, localStorage에 직접 접속 플래그 설정
- *       → 이후 같은 기기에서는 항상 직접 접속으로 분류됨
+ * 시나리오: 일반 링크로 접속 (→ 공유) → "관리자" 입력 → 관리자로 재분류
  */
 async function reclassifyToDirectVisit() {
     if (!FIREBASE_URL) return;
 
-    const dateKey   = getTodayKey();
-    const directKey = dateKey;                   // d-YYYYMMDD
-    const shareKey  = 's-' + dateKey.slice(2);   // s-YYYYMMDD
-    const directDup = '_today_hit_' + directKey;
-    const shareDup  = '_today_hit_' + shareKey;
+    const date     = getTodayKey();
+    const adminKey = 'd-' + date;
+    const shareKey = 's-' + date;
+    const adminDup = '_today_hit_' + adminKey;
+    const shareDup = '_today_hit_' + shareKey;
 
-    /* 이미 직접 접속으로 카운팅 됐으면 중복 방지 */
-    if (localStorage.getItem(directDup)) return;
+    if (localStorage.getItem(adminDup)) return;
 
     try {
-        /* ① 공유 카운트에서 자기 기여분 감소 (이번 탭에서 카운팅했을 때만) */
+        /* ① 공유 카운트에서 자기 기여분 감소 */
         if (sessionStorage.getItem(shareDup)) {
             const sharePath = `${FIREBASE_URL}/${COUNT_NS}/${shareKey}.json`;
             const shareCur  = await fetch(sharePath).then(r => r.json()).catch(() => 0);
@@ -2275,17 +2332,17 @@ async function reclassifyToDirectVisit() {
             sessionStorage.removeItem(shareDup);
         }
 
-        /* ② 직접 카운트 +1 */
-        const directPath = `${FIREBASE_URL}/${COUNT_NS}/${directKey}.json`;
-        const directCur  = await fetch(directPath).then(r => r.json()).catch(() => 0);
-        const directNext = (typeof directCur === 'number' ? directCur : 0) + 1;
-        const res = await fetch(directPath, {
+        /* ② 관리자 카운트 +1 */
+        const adminPath = `${FIREBASE_URL}/${COUNT_NS}/${adminKey}.json`;
+        const adminCur  = await fetch(adminPath).then(r => r.json()).catch(() => 0);
+        const adminNext = (typeof adminCur === 'number' ? adminCur : 0) + 1;
+        const res = await fetch(adminPath, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(directNext),
+            body: JSON.stringify(adminNext),
         });
         if (res.ok) {
-            localStorage.setItem(directDup, '1');
+            localStorage.setItem(adminDup, '1');
         }
     } catch (_) {}
 }
@@ -2298,14 +2355,16 @@ function cleanOldHitKeys() {
         + String(cutoff.getMonth()+1).padStart(2,'0')
         + String(cutoff.getDate()).padStart(2,'0');
     Object.keys(localStorage).forEach(k => {
-        if (k.startsWith('_today_hit_d-')) {
-            const dateStr = k.replace('_today_hit_d-', '');
+        if (k.startsWith('_today_hit_d') || k.startsWith('_today_hit_dp')) {
+            const dateStr = k.replace(/^_today_hit_d[p]?-/, '');
             if (dateStr < cutStr) localStorage.removeItem(k);
         }
     });
 }
 
-/* 투데이 팝업 — 관리자(직접) / 일반(공유) 분리 표시 */
+/* ════════════════════════════════════════════
+   투데이 팝업 — 관리자 / 부관리자 / 공유링크 3분류 표시
+════════════════════════════════════════════ */
 async function showTodayVisitorPopup() {
     document.getElementById('todayPopup')?.remove();
 
@@ -2321,11 +2380,16 @@ async function showTodayVisitorPopup() {
             <div class="tp-rows">
                 <div class="tp-row">
                     <span class="tp-label">👑 관리자 접속</span>
-                    <span class="tp-val" id="tpDirect"><span class="tp-spinner-sm"></span></span>
+                    <span class="tp-val" id="tpAdmin"><span class="tp-spinner-sm"></span></span>
                 </div>
                 <div class="tp-divider"></div>
                 <div class="tp-row">
-                    <span class="tp-label">🔗 공유 접속</span>
+                    <span class="tp-label">👤 부관리자 접속</span>
+                    <span class="tp-val" id="tpDeputy"><span class="tp-spinner-sm"></span></span>
+                </div>
+                <div class="tp-divider"></div>
+                <div class="tp-row">
+                    <span class="tp-label">🔗 공유링크 접속</span>
                     <span class="tp-val" id="tpShare"><span class="tp-spinner-sm"></span></span>
                 </div>
                 <div class="tp-divider"></div>
@@ -2335,7 +2399,7 @@ async function showTodayVisitorPopup() {
                 </div>
             </div>
             <p class="tp-date">${new Date().toLocaleDateString('ko-KR')} 기준</p>
-            <p class="tp-hint">관리자 = 관리자 + 부관리자 · 공유 = 그 외 전체<br>같은 기기/탭 당일 중복 집계 제외</p>
+            <p class="tp-hint">같은 기기/탭 당일 중복 집계 제외</p>
         </div>`;
     document.body.appendChild(popup);
 
@@ -2349,19 +2413,17 @@ async function showTodayVisitorPopup() {
         });
     }, 200);
 
-    /* 직접/공유 API 병렬 조회 */
-    const dateKey   = getTodayKey();
-    const directKey = dateKey;                  // d-YYYYMMDD
-    const shareKey  = 's-' + dateKey.slice(2); // s-YYYYMMDD
+    /* 3종 API 병렬 조회 */
+    const date      = getTodayKey();
+    const adminKey  = 'd-'  + date;
+    const deputyKey = 'dp-' + date;
+    const shareKey  = 's-'  + date;
 
     if (!FIREBASE_URL) {
-        /* Firebase 미설정 시 안내 표시 */
-        const elD = document.getElementById('tpDirect');
-        const elS = document.getElementById('tpShare');
-        const elT = document.getElementById('tpTotal');
-        if (elD) elD.innerHTML = '<span class="tp-err">설정 필요</span>';
-        if (elS) elS.innerHTML = '<span class="tp-err">설정 필요</span>';
-        if (elT) elT.innerHTML = '<span class="tp-err" style="font-size:0.7rem">FIREBASE_URL을 설정하세요</span>';
+        ['tpAdmin','tpDeputy','tpShare','tpTotal'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<span class="tp-err">설정 필요</span>';
+        });
         return;
     }
 
@@ -2377,18 +2439,21 @@ async function showTodayVisitorPopup() {
         ? '<span class="tp-err">-</span>'
         : `<span class="tp-num-sm">${Number(n).toLocaleString('ko-KR')}</span><span class="tp-unit-sm">명</span>`;
 
-    const [direct, share] = await Promise.all([
-        fetchCount(directKey),
+    const [admin, deputy, share] = await Promise.all([
+        fetchCount(adminKey),
+        fetchCount(deputyKey),
         fetchCount(shareKey),
     ]);
 
-    const elD = document.getElementById('tpDirect');
+    const elA = document.getElementById('tpAdmin');
+    const elP = document.getElementById('tpDeputy');
     const elS = document.getElementById('tpShare');
     const elT = document.getElementById('tpTotal');
-    if (elD) elD.innerHTML = fmt(direct);
+    if (elA) elA.innerHTML = fmt(admin);
+    if (elP) elP.innerHTML = fmt(deputy);
     if (elS) elS.innerHTML = fmt(share);
     if (elT) {
-        const total = (direct ?? 0) + (share ?? 0);
+        const total = (admin ?? 0) + (deputy ?? 0) + (share ?? 0);
         elT.innerHTML = `<span class="tp-num-sm tp-total-num">${total.toLocaleString('ko-KR')}</span><span class="tp-unit-sm">명</span>`;
     }
 }
@@ -2829,9 +2894,16 @@ function showAdminBadge() {
     bar.innerHTML = `
         <span class="ab-crown">👑</span>
         <span class="ab-text">관리자 모드</span>
+        <button type="button" class="ab-pw" aria-label="비밀번호 변경" title="비밀번호 변경">🔑</button>
         <button type="button" class="ab-off" aria-label="관리자 모드 해제">해제</button>
     `;
     stickyHeader.prepend(bar);
+
+    /* 비밀번호 변경 버튼 */
+    bar.querySelector('.ab-pw').addEventListener('click', (e) => {
+        e.stopPropagation();
+        showChangePinModal();
+    });
 
     /* 해제 버튼: 즉시 해제 + 공유 버튼 재바인딩 (새로고침 불필요) */
     bar.querySelector('.ab-off').addEventListener('click', (e) => {
@@ -3084,4 +3156,199 @@ function setupCsvPollingForRecipient() {
         aborted = true;
         if (timer) clearInterval(timer);
     });
+}
+
+/* ════════════════════════════════════════════
+   관리자 비밀번호 입력 모달
+   ────────────────────────────────────────────
+   검색창에 "관리자" 입력 시 표시.
+   숫자만 입력 가능 (inputmode="numeric", 영문/한글 필터링).
+   3회 연속 실패 시 30초 잠금.
+════════════════════════════════════════════ */
+function showAdminPinModal() {
+    if (document.getElementById('adminPinModal')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'adminPinModal';
+    overlay.className = 'apm-overlay';
+    overlay.innerHTML = `
+        <div class="apm-card">
+            <div class="apm-header">
+                <span class="apm-icon">🔐</span>
+                <strong class="apm-title">관리자 인증</strong>
+                <button class="apm-close" id="apmClose" aria-label="닫기">✕</button>
+            </div>
+            <p class="apm-desc">관리자 비밀번호를 입력하세요</p>
+            <input type="password" id="apmInput" class="apm-input"
+                   inputmode="numeric" pattern="[0-9]*" maxlength="20"
+                   placeholder="숫자 비밀번호" autocomplete="off">
+            <p class="apm-error" id="apmError"></p>
+            <button class="apm-submit" id="apmSubmit">확인</button>
+        </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    const input   = document.getElementById('apmInput');
+    const errEl   = document.getElementById('apmError');
+    const submitBtn = document.getElementById('apmSubmit');
+    let failCount = 0;
+    let locked    = false;
+
+    /* 숫자만 허용 */
+    input.addEventListener('input', () => {
+        input.value = input.value.replace(/[^0-9]/g, '');
+    });
+
+    /* 포커스 */
+    setTimeout(() => input.focus(), 200);
+
+    const close = () => {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 250);
+    };
+
+    const tryLogin = () => {
+        if (locked) return;
+        const pin = input.value.trim();
+        if (!pin) { errEl.textContent = '비밀번호를 입력해 주세요'; return; }
+        if (!/^\d+$/.test(pin)) { errEl.textContent = '숫자만 입력 가능합니다'; input.value = ''; return; }
+
+        if (verifyAdminPin(pin)) {
+            close();
+            setAdmin(true);
+            showAdminBadge();
+            rebindShareBtn();
+            reclassifyToDirectVisit();
+            showToast('👑 관리자 모드 활성화');
+        } else {
+            failCount++;
+            input.value = '';
+            if (failCount >= 3) {
+                locked = true;
+                errEl.textContent = '3회 실패 — 30초 후 다시 시도해 주세요';
+                submitBtn.disabled = true;
+                input.disabled = true;
+                setTimeout(() => {
+                    locked = false;
+                    failCount = 0;
+                    errEl.textContent = '';
+                    submitBtn.disabled = false;
+                    input.disabled = false;
+                    input.focus();
+                }, 30000);
+            } else {
+                errEl.textContent = `비밀번호가 틀렸습니다 (${failCount}/3)`;
+            }
+        }
+    };
+
+    submitBtn.addEventListener('click', tryLogin);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
+    document.getElementById('apmClose').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+/* ════════════════════════════════════════════
+   관리자 비밀번호 변경 모달
+   ────────────────────────────────────────────
+   검색창에 "비밀번호변경" 입력 시 표시 (관리자 상태에서만).
+   현재 비밀번호 → 새 비밀번호 → 새 비밀번호 확인 3단계.
+   숫자만 입력 가능, 최소 4자리.
+════════════════════════════════════════════ */
+function showChangePinModal() {
+    if (document.getElementById('changePinModal')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'changePinModal';
+    overlay.className = 'apm-overlay';
+    overlay.innerHTML = `
+        <div class="apm-card">
+            <div class="apm-header">
+                <span class="apm-icon">🔑</span>
+                <strong class="apm-title">비밀번호 변경</strong>
+                <button class="apm-close" id="cpClose" aria-label="닫기">✕</button>
+            </div>
+            <p class="apm-desc">숫자만 입력 가능 · 최소 4자리</p>
+            <div class="apm-fields">
+                <input type="password" id="cpCurrent" class="apm-input"
+                       inputmode="numeric" pattern="[0-9]*" maxlength="20"
+                       placeholder="현재 비밀번호" autocomplete="off">
+                <input type="password" id="cpNew" class="apm-input"
+                       inputmode="numeric" pattern="[0-9]*" maxlength="20"
+                       placeholder="새 비밀번호 (4자리 이상)" autocomplete="off">
+                <input type="password" id="cpConfirm" class="apm-input"
+                       inputmode="numeric" pattern="[0-9]*" maxlength="20"
+                       placeholder="새 비밀번호 확인" autocomplete="off">
+            </div>
+            <p class="apm-error" id="cpError"></p>
+            <button class="apm-submit" id="cpSubmit">변경</button>
+        </div>`;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('open'));
+
+    const curInput  = document.getElementById('cpCurrent');
+    const newInput  = document.getElementById('cpNew');
+    const cfmInput  = document.getElementById('cpConfirm');
+    const errEl     = document.getElementById('cpError');
+
+    /* 숫자만 허용 — 모든 입력 필드 */
+    [curInput, newInput, cfmInput].forEach(inp => {
+        inp.addEventListener('input', () => {
+            inp.value = inp.value.replace(/[^0-9]/g, '');
+        });
+    });
+
+    setTimeout(() => curInput.focus(), 200);
+
+    const close = () => {
+        overlay.classList.remove('open');
+        setTimeout(() => overlay.remove(), 250);
+    };
+
+    const tryChange = () => {
+        const cur = curInput.value.trim();
+        const nw  = newInput.value.trim();
+        const cfm = cfmInput.value.trim();
+
+        if (!cur) { errEl.textContent = '현재 비밀번호를 입력해 주세요'; curInput.focus(); return; }
+        if (!/^\d+$/.test(cur)) { errEl.textContent = '숫자만 입력 가능합니다'; return; }
+
+        if (!verifyAdminPin(cur)) {
+            errEl.textContent = '현재 비밀번호가 틀렸습니다';
+            curInput.value = '';
+            curInput.focus();
+            return;
+        }
+        if (!nw || nw.length < 4) {
+            errEl.textContent = '새 비밀번호는 4자리 이상이어야 합니다';
+            newInput.focus();
+            return;
+        }
+        if (!/^\d+$/.test(nw)) { errEl.textContent = '숫자만 입력 가능합니다'; return; }
+        if (nw !== cfm) {
+            errEl.textContent = '새 비밀번호가 일치하지 않습니다';
+            cfmInput.value = '';
+            cfmInput.focus();
+            return;
+        }
+        if (nw === cur) {
+            errEl.textContent = '현재와 다른 비밀번호를 입력해 주세요';
+            newInput.value = '';
+            cfmInput.value = '';
+            newInput.focus();
+            return;
+        }
+
+        if (changeAdminPin(nw)) {
+            close();
+            showToast('✅ 비밀번호가 변경되었습니다');
+        } else {
+            errEl.textContent = '변경에 실패했습니다. 다시 시도해 주세요.';
+        }
+    };
+
+    document.getElementById('cpSubmit').addEventListener('click', tryChange);
+    cfmInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryChange(); });
+    document.getElementById('cpClose').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 }
